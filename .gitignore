@@ -5,8 +5,8 @@ node_modules/
 .env
 
 # SQLite
-data/*.db
-data/*.sqlite
+backend/data/*.db
+backend/data/*.sqlite
 
 # Logs
 logs/
