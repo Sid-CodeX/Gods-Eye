@@ -1,14 +1,29 @@
-# Node
+# Node.js
 node_modules/
 
-# Database
-backend/data/*.db
-
-# Environment
+# Environment variables
 .env
 
-# Logs
-*.log
+# SQLite
+data/*.db
+data/*.sqlite
 
-# OS
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Build output
+dist/
+build/
+
+# OS files
 .DS_Store
+Thumbs.db
+
+# Editor configs
+.vscode/
+.idea/
+
+# Coverage
+coverage/
