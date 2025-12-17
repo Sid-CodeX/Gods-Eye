@@ -1,0 +1,29 @@
+# Node.js
+node_modules/
+
+# Environment variables
+.env
+
+# SQLite
+backend/data/*.db
+backend/data/*.sqlite
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+
+# Build output
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor configs
+.vscode/
+.idea/
+
+# Coverage
+coverage/

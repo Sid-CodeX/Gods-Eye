@@ -2,6 +2,8 @@
 
 A secure, anonymous whistleblowing web application frontend built with React, TypeScript, and Tailwind CSS.
 
+Privacy-preserving, Tor-based anonymous submission and two-way communication system with end-to-end encrypted storage.
+
 ## ⚠️ Security Notice
 
 **This is a frontend scaffold only.** All cryptographic functions are placeholders. Do not use this in production until proper client-side encryption is implemented using vetted libraries (e.g., libsodium-wrappers).
@@ -62,7 +64,7 @@ src/
 
 ## Routes
 
-- `/` - Redirects to `/submit`
+- `/` - Home page (landing page)
 - `/submit` - Whistleblower submission page
 - `/cases` - Case dashboard (investigator view)
 
@@ -96,4 +98,3 @@ Before production use:
 ## License
 
 This project is for educational/development purposes only.
-
