@@ -34,7 +34,7 @@ const HomePage: React.FC = () => {
               <span className="text-xs font-medium text-green-400">SYSTEM SECURE</span>
             </div>
             <Link
-              to="/submit"
+              to="/report-case"
               className="rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 px-4 py-2 text-sm font-medium text-white transition-all hover:from-blue-500 hover:to-purple-500 hover:shadow-lg hover:shadow-purple-500/50"
             >
               Secure Submit
@@ -74,7 +74,7 @@ const HomePage: React.FC = () => {
           {/* CTA Buttons */}
           <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
             <Link
-              to="/submit"
+              to="/report-case"
               className="flex items-center gap-2 rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-3 text-base font-medium text-white transition-all hover:from-blue-500 hover:to-purple-500 hover:shadow-lg hover:shadow-purple-500/50"
             >
               <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -256,7 +256,7 @@ const HomePage: React.FC = () => {
           </p>
           <div className="flex flex-col items-center justify-center gap-4 sm:flex-row">
             <Link
-              to="/submit"
+              to="/report-case"
               className="rounded-lg bg-gradient-to-r from-blue-600 to-purple-600 px-6 py-3 text-base font-medium text-white transition-all hover:from-blue-500 hover:to-purple-500 hover:shadow-lg hover:shadow-purple-500/50"
             >
               Submit a Report
