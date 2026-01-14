@@ -10,8 +10,9 @@ CREATE TABLE messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   case_id TEXT NOT NULL,
   ciphertext BLOB NOT NULL,
+  nonce TEXT NOT NULL,
   hash TEXT NOT NULL,
-  sender_role TEXT NOT NULL,
+  ephemeral_public_key TEXT NOT NULL,
   seq INTEGER NOT NULL,
   created_at INTEGER NOT NULL,
   FOREIGN KEY (case_id) REFERENCES cases(case_id)
