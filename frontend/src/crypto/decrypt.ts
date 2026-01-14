@@ -1,26 +1,24 @@
-import type { EphemeralKeyPair } from './keys';
-import type { EncryptedPayload } from './encrypt';
+import sodium from "libsodium-wrappers";
+import type { EncryptedPayload as EP } from "./encrypt";
+import { deriveEncryptionKey } from "./kdf";
 
-/**
- * decryptReport
- *
- * TODO: Implement authenticated decryption using libsodium-wrappers.
- *
- * - Accepts an `EncryptedPayload` previously produced by `encryptReport`.
- * - Uses the appropriate private key material from `keyPair` to recover the plaintext.
- * - Must fail closed: if authentication fails, never return partial plaintext.
- * - Must not log ciphertext, keys, or recovered plaintext.
- */
+// Re-export type
+export type EncryptedPayload = EP;
+
 export async function decryptReport(
   payload: EncryptedPayload,
-  keyPair: EphemeralKeyPair,
+  sharedSecret: Uint8Array
 ): Promise<Uint8Array> {
-  void payload;
-  void keyPair;
+  await sodium.ready;
 
-  // Placeholder only. The real implementation will verify authenticity
-  // and either return the original plaintext bytes or throw on failure.
-  return new Uint8Array();
+  const encryptionKey = await deriveEncryptionKey(sharedSecret);
+
+  const plaintext = sodium.crypto_secretbox_open_easy(
+    payload.ciphertext,
+    payload.nonce,
+    encryptionKey
+  );
+
+  if (!plaintext) throw new Error("Decryption failed or authentication failed");
+  return plaintext;
 }
-
-
