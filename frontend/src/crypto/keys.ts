@@ -1,30 +1,39 @@
-/**
- * Placeholder types for ephemeral keys.
- *
- * In a real implementation, these would likely wrap libsodium key pairs and
- * possibly include algorithm identifiers and versioning.
- */
+import sodium from "libsodium-wrappers";
+
 export interface EphemeralKeyPair {
   publicKey: Uint8Array;
   privateKey: Uint8Array;
 }
 
 /**
- * generateEphemeralKeyPair
- *
- * TODO: Implement using a vetted cryptographic library (e.g. libsodium-wrappers).
- *
- * - Must generate a fresh key pair per session or per submission.
- * - Keys must never be written to disk, localStorage, cookies, or logged.
- * - Private keys must only live in memory for as long as strictly necessary.
+ * Generate a fresh ephemeral keypair (X25519) for a session or message.
  */
 export async function generateEphemeralKeyPair(): Promise<EphemeralKeyPair> {
-  // IMPORTANT: Do not implement your own crypto here.
-  // This is a non-functional placeholder that returns zero-length buffers.
+  await sodium.ready;
+
+  // Generate X25519 keypair for key exchange
+  const keyPair = sodium.crypto_box_keypair();
   return {
-    publicKey: new Uint8Array(),
-    privateKey: new Uint8Array(),
+    publicKey: keyPair.publicKey,
+    privateKey: keyPair.privateKey,
   };
 }
 
-
+/**
+ * Derive a shared secret using X25519 ephemeral keys.
+ * Uses crypto_box_beforenm to compute the shared secret.
+ * - senderPrivateKey: your private key
+ * - receiverPublicKey: recipient's public key
+ */
+export async function deriveSharedSecret(
+  senderPrivateKey: Uint8Array,
+  receiverPublicKey: Uint8Array
+): Promise<Uint8Array> {
+  await sodium.ready;
+  
+  // Use crypto_box_beforenm to derive shared secret from keypair
+  // This computes the shared secret for encryption
+  const sharedSecret = sodium.crypto_box_beforenm(receiverPublicKey, senderPrivateKey);
+  
+  return sharedSecret;
+}

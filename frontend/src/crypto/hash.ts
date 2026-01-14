@@ -1,17 +1,12 @@
 /**
- * hashSha256
- *
- * TODO: Implement using a well-reviewed library or Web Crypto API.
- *
- * - Accepts arbitrary binary input as Uint8Array.
- * - Returns a Uint8Array representing the SHA-256 hash.
- * - Intended for integrity checks and deduplication, never for password storage.
+ * Compute SHA-256 hash of binary data using Web Crypto API.
+ * @param input - Data to hash as Uint8Array
+ * @returns SHA-256 hash as Uint8Array
  */
 export async function hashSha256(input: Uint8Array): Promise<Uint8Array> {
-  // IMPORTANT: This is a placeholder. Do not roll your own hash function.
-  // Replace with a real SHA-256 implementation wired to libsodium or Web Crypto.
-  void input; // avoid unused parameter until implemented
-  return new Uint8Array();
+  // Use Web Crypto API for SHA-256 hashing
+  // Create a new ArrayBuffer from the Uint8Array to ensure compatibility
+  const buffer = new Uint8Array(input).buffer;
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+  return new Uint8Array(hashBuffer);
 }
-
-
