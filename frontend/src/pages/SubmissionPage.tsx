@@ -3,10 +3,18 @@ import { Link } from 'react-router-dom';
 import Panel from '../components/layout/Panel';
 import AnonymityNotice from '../components/submission/AnonymityNotice';
 import FileUploadPlaceholder from '../components/submission/FileUploadPlaceholder';
-import { generateEphemeralKeyPair } from '../crypto/keys';
+import { generateEphemeralKeyPair, deriveSharedSecret, EphemeralKeyPair } from '../crypto/keys';
 import { hashSha256 } from '../crypto/hash';
-import { scrubMetadata } from '../crypto/metadata';
-import { encryptReport } from '../crypto/encrypt';
+import { stripMetadata } from '../crypto/metadata';
+import { encryptReport, EncryptedPayload } from '../crypto/encrypt';
+import { INVIGILATOR_PUBLIC_KEY } from '../crypto/constants';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL;
+
+// Utility: convert Uint8Array to base64 for sending via JSON
+function uint8ToBase64(bytes: Uint8Array) {
+  return btoa(String.fromCharCode(...bytes));
+}
 
 const SubmissionPage: React.FC = () => {
   const [reportText, setReportText] = useState('');
@@ -15,36 +23,58 @@ const SubmissionPage: React.FC = () => {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    setStatusMessage(null);
+    setStatusMessage('Processing...');
 
-    // This function demonstrates the intended flow only.
-    // It does NOT perform real encryption and does NOT send data anywhere.
+    try {
+      const encoder = new TextEncoder();
+      const reportBytes = encoder.encode(reportText);
 
-    const encoder = new TextEncoder();
-    const reportBytes = encoder.encode(reportText);
+      // 1️⃣ Hash plaintext for integrity / associated data
+      const reportHash = await hashSha256(reportBytes);
 
-    // 1. Hash plaintext before encryption for integrity / case identifiers.
-    const reportHash = await hashSha256(reportBytes);
-
-    // 2. Scrub file metadata client-side (placeholder).
-    if (selectedFiles && selectedFiles.length > 0) {
-      for (const file of Array.from(selectedFiles)) {
-        const buffer = await file.arrayBuffer();
-        const binary = new Uint8Array(buffer);
-        await scrubMetadata(binary);
+      // 2️⃣ Scrub file metadata
+      if (selectedFiles && selectedFiles.length > 0) {
+        for (const file of Array.from(selectedFiles)) {
+          const buffer = await file.arrayBuffer();
+          const binary = new Uint8Array(buffer);
+          await stripMetadata(binary);
+        }
       }
+
+      // 3️⃣ Generate ephemeral keypair for this submission
+      const keyPair: EphemeralKeyPair = await generateEphemeralKeyPair();
+
+      // 4️⃣ Derive shared secret with invigilator's public key
+      const sharedSecret = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
+
+      // 5️⃣ Encrypt report using the shared secret
+      const payload: EncryptedPayload = await encryptReport(reportBytes, sharedSecret, { associatedData: reportHash });
+
+      // 6️⃣ Request new case ID from backend
+      const caseResp = await fetch(`${API_BASE}/cases/create`, { method: 'POST' });
+      if (!caseResp.ok) throw new Error('Failed to create case');
+      const { case_id } = await caseResp.json();
+
+      // 7️⃣ Send encrypted report to backend
+      const sendResp = await fetch(`${API_BASE}/messages/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_id,
+          ciphertext: uint8ToBase64(payload.ciphertext),
+          nonce: uint8ToBase64(payload.nonce),
+          hash: uint8ToBase64(reportHash),
+          seq: 0
+        })
+      });
+
+      if (!sendResp.ok) throw new Error('Failed to send message');
+
+      setStatusMessage(`Report submitted securely. Case ID: ${case_id}`);
+    } catch (err: any) {
+      console.error(err);
+      setStatusMessage(`Error: ${err.message}`);
     }
-
-    // 3. Generate ephemeral key material per submission.
-    const keyPair = await generateEphemeralKeyPair();
-
-    // 4. Encrypt the report (placeholder, no real crypto yet).
-    await encryptReport(reportBytes, keyPair, { associatedData: reportHash });
-
-    // In a real app, the resulting ciphertext and hash would be sent to the untrusted backend here.
-    setStatusMessage(
-      'Report processed locally (simulation). No data was transmitted. Encryption will be wired in later.',
-    );
   }
 
   return (
@@ -55,8 +85,7 @@ const SubmissionPage: React.FC = () => {
             Submit an anonymous report
           </h1>
           <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300">
-            This interface is designed for anonymous whistleblowing. Your report will eventually be
-            encrypted in your browser before being stored on an untrusted server.
+            This interface is designed for anonymous whistleblowing. Your report will be encrypted in-browser before being stored on an untrusted server.
           </p>
         </div>
         <Link
@@ -94,8 +123,8 @@ const SubmissionPage: React.FC = () => {
           <FileUploadPlaceholder onFilesSelected={setSelectedFiles} />
 
           <div className="flex items-center justify-between pt-2 text-xs text-slate-500 dark:text-slate-400">
-            <span>No data leaves your browser in this prototype.</span>
-            <span>Later: client-side encryption with vetted libraries only.</span>
+            <span>No data leaves your browser unencrypted.</span>
+            <span>Client-side encryption only.</span>
           </div>
 
           <div className="pt-2">
@@ -103,7 +132,7 @@ const SubmissionPage: React.FC = () => {
               type="submit"
               className="inline-flex items-center rounded-full bg-primary-600 px-5 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-primary-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100"
             >
-              Submit securely (simulated)
+              Submit securely
             </button>
           </div>
 
@@ -119,5 +148,3 @@ const SubmissionPage: React.FC = () => {
 };
 
 export default SubmissionPage;
-
-
