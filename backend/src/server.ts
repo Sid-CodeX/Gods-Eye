@@ -5,6 +5,7 @@ import dotenv from "dotenv";
 
 import casesRouter from "./routes/cases";
 import messagesRouter from "./routes/messages";
+import invigilatorRouter from "./routes/invigilator";
 
 dotenv.config();
 
@@ -16,8 +17,9 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // Routes
-app.use("/cases", casesRouter);
-app.use("/messages", messagesRouter);
+app.use("/api/cases", casesRouter);
+app.use("/api/messages", messagesRouter);
+app.use("/api/inv", invigilatorRouter);
 
 // Test route
 app.get("/", (req, res) => {
