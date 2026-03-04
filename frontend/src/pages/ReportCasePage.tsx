@@ -1,6 +1,21 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Panel from '../components/layout/Panel';
+import { generateEphemeralKeyPair } from '../crypto/keys';
+
+async function uint8ToBase64(bytes: Uint8Array): Promise<string> {
+  const blob = new Blob([bytes as any]);
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL;
 
@@ -14,8 +29,16 @@ const ReportCasePage: React.FC = () => {
     setStatusMessage('Creating new case...');
 
     try {
+      const keyPair = await generateEphemeralKeyPair();
+      const wbPublicBase64 = await uint8ToBase64(keyPair.publicKey);
+      const wbPrivateBase64 = await uint8ToBase64(keyPair.privateKey);
+
       const response = await fetch(`${API_BASE}/cases/create`, {
-        method: 'GET',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ wb_static_public: wbPublicBase64 }),
       });
 
       if (!response.ok) {
@@ -30,8 +53,8 @@ const ReportCasePage: React.FC = () => {
         throw new Error('Invalid response from server: missing case_id');
       }
 
-      // Navigate to submission page with the case ID
-      navigate(`/submit/${caseId}`);
+      // Navigate to submission page with the case ID and private key
+      navigate(`/submit/${caseId}`, { state: { wbPrivateKey: wbPrivateBase64 } });
     } catch (err: any) {
       console.error('Error creating case:', err);
       setStatusMessage(`Error: ${err.message || 'Failed to create case. Please try again.'}`);
@@ -95,11 +118,10 @@ const ReportCasePage: React.FC = () => {
 
           {statusMessage && (
             <div
-              className={`mt-4 rounded-lg p-3 text-sm ${
-                statusMessage.startsWith('Error')
+              className={`mt-4 rounded-lg p-3 text-sm ${statusMessage.startsWith('Error')
                   ? 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-200'
                   : 'bg-blue-50 text-blue-800 dark:bg-blue-900/20 dark:text-blue-200'
-              }`}
+                }`}
               role="alert"
             >
               {statusMessage}
