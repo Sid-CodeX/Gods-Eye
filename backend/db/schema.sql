@@ -2,6 +2,7 @@
 
 CREATE TABLE cases (
   case_id TEXT PRIMARY KEY,
+  wb_static_public TEXT,
   created_at INTEGER NOT NULL,
   expires_at INTEGER
 );
