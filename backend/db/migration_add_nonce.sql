@@ -21,3 +21,5 @@ UPDATE messages SET nonce = '' WHERE nonce IS NULL;
 -- For now, we'll allow NULL for existing databases and handle it in the application
 
 
+
+

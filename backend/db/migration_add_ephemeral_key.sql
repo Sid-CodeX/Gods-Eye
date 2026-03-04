@@ -9,3 +9,5 @@ ALTER TABLE messages ADD COLUMN ephemeral_public_key TEXT;
 UPDATE messages SET ephemeral_public_key = '' WHERE ephemeral_public_key IS NULL;
 
 
+
+
