@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import Panel from '../components/layout/Panel';
 import AnonymityNotice from '../components/submission/AnonymityNotice';
 import FileUploadPlaceholder from '../components/submission/FileUploadPlaceholder';
 import { generateEphemeralKeyPair, deriveSharedSecret, EphemeralKeyPair } from '../crypto/keys';
 import { hashSha256 } from '../crypto/hash';
-import { stripMetadata } from '../crypto/metadata';
+import { stripMetadata, processFile } from '../crypto/metadata';
 import { encryptReport, EncryptedPayload } from '../crypto/encrypt';
 import { INVIGILATOR_PUBLIC_KEY } from '../crypto/constants';
 import { deriveEncryptionKey } from "../crypto/kdf";
@@ -14,8 +14,19 @@ import { deriveEncryptionKey } from "../crypto/kdf";
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
 
 // Utility: convert Uint8Array to base64 for sending via JSON
-function uint8ToBase64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes));
+async function uint8ToBase64(bytes: Uint8Array): Promise<string> {
+  const blob = new Blob([bytes as any]);
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      // remove the "data:application/octet-stream;base64," prefix
+      const base64 = dataUrl.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
 }
 
 // Utility: copy text to clipboard
@@ -45,17 +56,20 @@ async function copyToClipboard(text: string): Promise<boolean> {
 const CaseSubmissionPage: React.FC = () => {
   const { caseId } = useParams<{ caseId: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
+  const wbPrivateKey = location.state?.wbPrivateKey;
   const [reportText, setReportText] = useState('');
   const [selectedFiles, setSelectedFiles] = useState<FileList | null>(null);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [copiedKey, setCopiedKey] = useState(false);
 
   useEffect(() => {
-    if (!caseId) {
+    if (!caseId || !wbPrivateKey) {
       navigate('/report-case');
     }
-  }, [caseId, navigate]);
+  }, [caseId, wbPrivateKey, navigate]);
 
   const handleCopyCaseId = async () => {
     if (!caseId) return;
@@ -68,86 +82,84 @@ const CaseSubmissionPage: React.FC = () => {
     }
   };
 
+  const handleCopyPrivateKey = async () => {
+    if (!wbPrivateKey) return;
+    const success = await copyToClipboard(wbPrivateKey);
+    if (success) {
+      setCopiedKey(true);
+      setTimeout(() => setCopiedKey(false), 2000);
+    } else {
+      setStatusMessage('Failed to copy private key. Please copy it manually.');
+    }
+  };
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     if (!caseId) return;
-
     setIsSubmitting(true);
-    setStatusMessage('Processing...');
+    setStatusMessage('Stripping metadata and encrypting...');
 
     try {
       const encoder = new TextEncoder();
-      const reportBytes = encoder.encode(reportText);
 
-      // 1️⃣ Hash plaintext for integrity / associated data
-      const reportHash = await hashSha256(reportBytes);
-
-      // 2️⃣ Process and encrypt files
-      const fileDataArray: Uint8Array[] = [];
-      if (selectedFiles && selectedFiles.length > 0) {
+      // 1. Process Files with Sanitization
+      const processedFiles = [];
+      if (selectedFiles) {
         for (const file of Array.from(selectedFiles)) {
-          const buffer = await file.arrayBuffer();
-          const binary = new Uint8Array(buffer);
-          // Strip metadata from file
-          const cleanedData = await stripMetadata(binary);
-          fileDataArray.push(cleanedData);
+          const { data, mimeType: mime } = await processFile(file);
+          const fileHash = await hashSha256(data); // Tamper detection hash
+
+          processedFiles.push({
+            name: file.name,
+            mime: mime,
+            hash: await uint8ToBase64(fileHash),
+            data: await uint8ToBase64(data)
+          });
         }
       }
 
-      // 3️⃣ Combine report text and files into a single payload
-      // Format: JSON with report text and file data
+      // 2. Build the Comprehensive Payload
       const payloadData = {
         report: reportText,
-        files: fileDataArray.map((data, index) => ({
-          name: selectedFiles?.[index]?.name || `file_${index}`,
-          data: Array.from(data), // Convert to regular array for JSON
-        })),
+        files: processedFiles,
+        timestamp: Date.now(),
       };
-      const payloadJson = JSON.stringify(payloadData);
-      const payloadBytes = encoder.encode(payloadJson);
 
-      // 4️⃣ Generate ephemeral keypair for this submission
-      const keyPair: EphemeralKeyPair = await generateEphemeralKeyPair();
+      const payloadBytes = encoder.encode(JSON.stringify(payloadData));
+      const overallHash = await hashSha256(payloadBytes);
 
-      // 5️⃣ Derive shared secret with invigilator's public key
+      // 3. Cryptography
+      const keyPair = await generateEphemeralKeyPair();
       const sharedSecret = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
-
-      // Derive symmetric encryption key
       const encryptionKey = await deriveEncryptionKey(sharedSecret);
-      // 6️⃣ Encrypt the combined payload using the shared secret
-      // Encrypt payload
-      const encryptedPayload = await encryptReport(
+
+      const encrypted = await encryptReport(
         payloadBytes,
-        encryptionKey,
-        { associatedData: reportHash }
+        encryptionKey,       // sharedSecret (The actual key)
+        "application/json" // mimeType
       );
 
-      // 7️⃣ Send encrypted report to backend (including ephemeral public key for decryption)
-      setStatusMessage('Submitting encrypted report...');
-      const sendResp = await fetch(`${API_BASE}/messages/send`, {
+      // 4. Send to Backend
+      setStatusMessage('Uploading to secure vault...');
+      const response = await fetch(`${API_BASE}/messages/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           case_id: caseId,
-          ciphertext: uint8ToBase64(encryptedPayload.ciphertext),
-          nonce: uint8ToBase64(encryptedPayload.nonce),
-          hash: uint8ToBase64(reportHash),
-          ephemeral_public_key: uint8ToBase64(keyPair.publicKey),
+          ciphertext: await uint8ToBase64(encrypted.ciphertext),
+          nonce: await uint8ToBase64(encrypted.nonce),
+          hash: await uint8ToBase64(overallHash),
+          ephemeral_public_key: await uint8ToBase64(keyPair.publicKey),
           seq: 0,
         }),
       });
 
-      if (!sendResp.ok) {
-        const errorText = await sendResp.text();
-        throw new Error(`Failed to send message: ${errorText || sendResp.statusText}`);
-      }
+      if (!response.ok) throw new Error('Network response was not ok');
 
-      setStatusMessage('Report submitted securely');
-      // Clear form
+      setStatusMessage('Report & Files submitted successfully.');
       setReportText('');
       setSelectedFiles(null);
     } catch (err: any) {
-      console.error(err);
       setStatusMessage(`Error: ${err.message}`);
     } finally {
       setIsSubmitting(false);
@@ -166,7 +178,7 @@ const CaseSubmissionPage: React.FC = () => {
             Submit an anonymous report
           </h1>
           <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300">
-            Your case ID has been generated. Save it securely to check for responses later.
+            Your case ID and private key have been generated. Save them securely to check for responses later.
           </p>
         </div>
         <button
@@ -182,43 +194,70 @@ const CaseSubmissionPage: React.FC = () => {
 
       {/* Case ID Display */}
       <Panel
-        title="Your Case ID"
-        description="Save this case ID securely. You'll need it to check for responses from investigators."
+        title="Your Case Credentials"
+        description="Save your Case ID and Private Key securely. You will need BOTH to check for responses from investigators. The private key is NEVER saved on our servers."
       >
-        <div className="space-y-4">
-          <div className="flex items-center gap-3">
-            <code className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-mono text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100">
-              {caseId}
-            </code>
-            <button
-              onClick={handleCopyCaseId}
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
-            >
-              {copied ? (
-                <>
-                  <svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Copied!
-                </>
-              ) : (
-                <>
-                  <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"
-                    />
-                  </svg>
-                  Copy
-                </>
-              )}
-            </button>
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">Case ID</label>
+            <div className="flex items-center gap-3">
+              <code className="flex-1 rounded-lg border border-slate-300 bg-slate-50 px-4 py-3 text-sm font-mono text-slate-900 dark:border-slate-600 dark:bg-slate-700 dark:text-slate-100">
+                {caseId}
+              </code>
+              <button
+                onClick={handleCopyCaseId}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+              >
+                {copied ? (
+                  <>
+                    <svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Copy
+                  </>
+                )}
+              </button>
+            </div>
           </div>
-          <div className="rounded-lg bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-200">
-            <strong>Important:</strong> Store this case ID in a safe place. Without it, you won't be able to access
-            responses from investigators. Consider saving it in a password manager or writing it down securely.
+
+          <div className="space-y-2">
+            <label className="text-sm font-semibold text-slate-700 dark:text-slate-300">Private Key</label>
+            <div className="flex items-center gap-3">
+              <code className="flex-1 rounded-lg border border-red-300 outline outline-2 outline-offset-2 outline-red-200 bg-red-50/50 px-4 py-3 text-sm font-mono text-slate-900 dark:border-red-900/50 dark:outline-red-900/30 dark:bg-slate-900 dark:text-slate-100 break-all">
+                {wbPrivateKey}
+              </code>
+              <button
+                onClick={handleCopyPrivateKey}
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700 self-stretch"
+              >
+                {copiedKey ? (
+                  <>
+                    <svg className="h-4 w-4 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Copied!
+                  </>
+                ) : (
+                  <>
+                    <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                    </svg>
+                    Copy Key
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          <div className="rounded-lg bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-200 border border-amber-200 dark:border-amber-800/50">
+            <strong>CRITICAL:</strong> Store your private key in a safe place immediately. It will <strong>never</strong> be shown again and we cannot recover it. Without your private key, you will not be able to read replies from investigators.
           </div>
         </div>
       </Panel>
@@ -288,13 +327,12 @@ const CaseSubmissionPage: React.FC = () => {
 
           {statusMessage && (
             <div
-              className={`rounded-lg p-3 text-sm ${
-                statusMessage.startsWith('Error')
+              className={`rounded-lg p-3 text-sm ${statusMessage.startsWith('Error')
                   ? 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-200'
                   : statusMessage === 'Processing...' || statusMessage.includes('Submitting')
-                  ? 'bg-blue-50 text-blue-800 dark:bg-blue-900/20 dark:text-blue-200'
-                  : 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200'
-              }`}
+                    ? 'bg-blue-50 text-blue-800 dark:bg-blue-900/20 dark:text-blue-200'
+                    : 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200'
+                }`}
               role="alert"
               aria-live="polite"
             >
