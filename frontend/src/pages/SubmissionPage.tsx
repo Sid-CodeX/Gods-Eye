@@ -23,56 +23,77 @@ const SubmissionPage: React.FC = () => {
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    setStatusMessage('Processing...');
+    setStatusMessage('Scrubbing metadata and encrypting...');
 
     try {
       const encoder = new TextEncoder();
-      const reportBytes = encoder.encode(reportText);
-
-      // 1️⃣ Hash plaintext for integrity / associated data
-      const reportHash = await hashSha256(reportBytes);
-
-      // 2️⃣ Scrub file metadata
-      if (selectedFiles && selectedFiles.length > 0) {
+      
+      // 1️⃣ Process and Scrub Files
+      const processedFiles = [];
+      if (selectedFiles) {
         for (const file of Array.from(selectedFiles)) {
-          const buffer = await file.arrayBuffer();
-          const binary = new Uint8Array(buffer);
-          await stripMetadata(binary);
+          // Scrub metadata - ensure we await the result
+          const cleanedData: Uint8Array = await stripMetadata(file);
+
+          // Validation: Check if scrubbing actually returned data
+          if (cleanedData.length === 0) {
+            console.error(`Scrubbing failed for ${file.name}`);
+            continue;
+          }
+
+          processedFiles.push({
+            name: file.name,
+            mimeType: file.type, // Required for proper reconstruction
+            data: Array.from(cleanedData), // Convert Uint8Array to number[]
+            size: cleanedData.length
+          });
         }
       }
 
-      // 3️⃣ Generate ephemeral keypair for this submission
-      const keyPair: EphemeralKeyPair = await generateEphemeralKeyPair();
+      // 2️⃣ Bundle everything together
+      const fullPayload = {
+        report: reportText,
+        files: processedFiles,
+        timestamp: Date.now()
+      };
 
-      // 4️⃣ Derive shared secret with invigilator's public key
+      // Convert the whole bundle (text + files) into bytes
+      const payloadBytes = encoder.encode(JSON.stringify(fullPayload));
+
+      // 3️⃣ Cryptography
+      const reportHash = await hashSha256(payloadBytes);
+      const keyPair = await generateEphemeralKeyPair();
       const sharedSecret = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
 
-      // 5️⃣ Encrypt report using the shared secret
-      const payload: EncryptedPayload = await encryptReport(reportBytes, sharedSecret, { associatedData: reportHash });
+      // Encrypt the entire bundle
+      const encrypted = await encryptReport(
+        payloadBytes, 
+        sharedSecret, 
+        "application/json"
+      );
 
-      // 6️⃣ Request new case ID from backend
+      // 4️⃣ Networking (Case creation & Message sending)
       const caseResp = await fetch(`${API_BASE}/cases/create`, { method: 'POST' });
-      if (!caseResp.ok) throw new Error('Failed to create case');
       const { case_id } = await caseResp.json();
 
-      // 7️⃣ Send encrypted report to backend
       const sendResp = await fetch(`${API_BASE}/messages/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           case_id,
-          ciphertext: uint8ToBase64(payload.ciphertext),
-          nonce: uint8ToBase64(payload.nonce),
+          ciphertext: uint8ToBase64(encrypted.ciphertext),
+          nonce: uint8ToBase64(encrypted.nonce),
           hash: uint8ToBase64(reportHash),
+          // CRITICAL: You must send the public key so the invigilator can decrypt!
+          ephemeral_public_key: uint8ToBase64(keyPair.publicKey),
           seq: 0
         })
       });
 
-      if (!sendResp.ok) throw new Error('Failed to send message');
+      if (!sendResp.ok) throw new Error('Upload failed');
+      setStatusMessage(`Success! Case ID: ${case_id}`);
 
-      setStatusMessage(`Report submitted securely. Case ID: ${case_id}`);
     } catch (err: any) {
-      console.error(err);
       setStatusMessage(`Error: ${err.message}`);
     }
   }

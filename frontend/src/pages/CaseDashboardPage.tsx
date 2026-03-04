@@ -65,19 +65,21 @@ const CaseDashboardPage: React.FC = () => {
   );
 
   async function ensureDecryptedSummary(_encrypted: Uint8Array): Promise<string> {
-    // This function sketches the future flow for decrypting case metadata.
-    // It does not actually decrypt anything yet.
-
     const ephemeralKeys = await generateEphemeralKeyPair();
+    
+    // In a real scenario, you would derive the shared secret first
+    // For now, we use a dummy Uint8Array to satisfy the sharedSecret parameter
+    const dummySharedSecret = new Uint8Array(32); 
+
     await decryptReport(
       {
         ciphertext: _encrypted,
-        nonce: new Uint8Array(),
+        nonce: new Uint8Array(24), // crypto_secretbox_NONCEBYTES is 24
+        fileHash: new Uint8Array(32), // Added to fix the error (SHA-256 is 32 bytes)
       },
-      ephemeralKeys,
+      dummySharedSecret, // Pass the secret, not the whole keypair object
     );
 
-    // Later, the return value would be the recovered plaintext summary.
     return '[decrypted case summary placeholder]';
   }
 
