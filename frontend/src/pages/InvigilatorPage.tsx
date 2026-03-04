@@ -1,28 +1,26 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
+
 import Panel from '../components/layout/Panel';
 import CaseList, { Case } from '../components/invigilator/CaseList';
 import MessageList from '../components/invigilator/MessageList';
 import StatusMessage from '../components/invigilator/StatusMessage';
 import { Message, DecryptedMessage } from '../components/invigilator/MessageCard';
-import { decryptReport, EncryptedPayload } from '../crypto/decrypt';
-import { deriveSharedSecret } from '../crypto/keys';
+import ReplyBox from '../components/messaging/ReplyBox';
+
+import { decryptReport } from '../crypto/decrypt';
+import { EncryptedPayload, encryptReport } from '../crypto/encrypt';
+import { deriveSharedSecret, generateEphemeralKeyPair } from '../crypto/keys';
+import { hashSha256 } from '../crypto/hash';
+import { deriveEncryptionKey } from '../crypto/kdf';
+import { INVIGILATOR_PUBLIC_KEY } from '../crypto/constants';
+
 import sodium from 'libsodium-wrappers';
 
-/**
- * ============================
- * Environment Configuration
- * ============================
- */
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
 const INVIGILATOR_API_TOKEN = import.meta.env.VITE_INVIGILATOR_API_TOKEN;
 const INVIGILATOR_UI_SECRET = import.meta.env.VITE_INVIGILATOR_UI_SECRET;
 
-/**
- * ============================
- * Utilities
- * ============================
- */
 function base64ToUint8(base64: string): Uint8Array {
   const binaryString = atob(base64);
   const bytes = new Uint8Array(binaryString.length);
@@ -36,18 +34,20 @@ function uint8ToString(bytes: Uint8Array): string {
   return new TextDecoder().decode(bytes);
 }
 
-/**
- * ============================
- * Types
- * ============================
- */
-// Types are now imported from components
+async function uint8ToBase64(bytes: Uint8Array): Promise<string> {
+  const blob = new Blob([bytes as any]);
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = reader.result as string;
+      const base64 = dataUrl.split(',')[1];
+      resolve(base64);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 
-/**
- * ============================
- * Component
- * ============================
- */
 const InvigilatorPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -60,18 +60,14 @@ const InvigilatorPage: React.FC = () => {
 
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isAuthorized, setIsAuthorized] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoadingCases, setIsLoadingCases] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState<number | null>(null);
+  const [isSendingReply, setIsSendingReply] = useState(false);
 
-  /** ⚠️ MVP ONLY — do NOT keep private keys in frontend for production */
+  // ⚠️ MVP ONLY — do NOT keep private keys in frontend for production
   const [invigilatorPrivateKey, setInvigilatorPrivateKey] = useState<Uint8Array | null>(null);
 
-  /**
-   * ============================
-   * Authorization & Init
-   * ============================
-   */
   useEffect(() => {
     if (!INVIGILATOR_UI_SECRET) {
       setStatusMessage('Error: UI secret not configured');
@@ -86,16 +82,12 @@ const InvigilatorPage: React.FC = () => {
       setStatusMessage('Error: API token not configured');
       return;
     }
+
     setIsAuthorized(true);
     loadCases();
     loadPrivateKey();
   }, [uiSecretFromUrl]);
 
-  /**
-   * ============================
-   * Load Private Key (MVP)
-   * ============================
-   */
   const loadPrivateKey = () => {
     const privateKeyHex = import.meta.env.VITE_INVIGILATOR_PRIVATE_KEY;
     if (!privateKeyHex) {
@@ -108,14 +100,8 @@ const InvigilatorPage: React.FC = () => {
     setInvigilatorPrivateKey(keyBytes);
   };
 
-
-  /**
-   * ============================
-   * API Calls
-   * ============================
-   */
   const loadCases = async () => {
-    setIsLoading(true);
+    setIsLoadingCases(true);
     setStatusMessage('Loading cases...');
     try {
       const res = await fetch(`${API_BASE}/inv/cases`, {
@@ -128,7 +114,7 @@ const InvigilatorPage: React.FC = () => {
     } catch (err: any) {
       setStatusMessage(`Error: ${err.message}`);
     } finally {
-      setIsLoading(false);
+      setIsLoadingCases(false);
     }
   };
 
@@ -150,11 +136,6 @@ const InvigilatorPage: React.FC = () => {
     }
   };
 
-  /**
-   * ============================
-   * Decrypt Message
-   * ============================
-   */
   const decryptMessage = async (message: Message) => {
     if (!invigilatorPrivateKey) {
       setStatusMessage('Error: Private key unavailable. Check VITE_INVIGILATOR_PRIVATE_KEY in .env');
@@ -172,28 +153,25 @@ const InvigilatorPage: React.FC = () => {
     try {
       await sodium.ready;
 
-      // Convert base64 strings to Uint8Array
       const ciphertext = base64ToUint8(message.ciphertext);
       const nonce = base64ToUint8(message.nonce);
       const ephemeralPublicKey = base64ToUint8(message.ephemeral_public_key);
+      const fileHash = base64ToUint8(message.hash);
 
-      // Derive shared secret using invigilator's private key and ephemeral public key
-      // This produces the same shared secret that was used during encryption
       const sharedSecret = await deriveSharedSecret(invigilatorPrivateKey, ephemeralPublicKey);
 
-      // Create encrypted payload
       const payload: EncryptedPayload = {
         ciphertext,
         nonce,
+        fileHash,
+        mimeType: 'application/json',
       };
 
-      // Decrypt (this internally uses KDF to derive encryption key)
       const decryptedBytes = await decryptReport(payload, sharedSecret);
       const decryptedJson = uint8ToString(decryptedBytes);
       const decrypted: DecryptedMessage = JSON.parse(decryptedJson);
 
-      // Store decrypted message
-      setDecryptedMessages(prev => new Map(prev).set(message.id, decrypted));
+      setDecryptedMessages((prev) => new Map(prev).set(message.id, decrypted));
       setStatusMessage(`✓ Message #${message.seq} decrypted successfully`);
     } catch (err: any) {
       console.error('Decryption error:', err);
@@ -203,37 +181,93 @@ const InvigilatorPage: React.FC = () => {
     }
   };
 
-  /**
-   * ============================
-   * Access Denied
-   * ============================
-   */
+  const sendReply = async (body: string) => {
+    if (!selectedCase) {
+      setStatusMessage('Error: Select a case before sending a reply.');
+      return;
+    }
+    if (!body.trim()) {
+      return;
+    }
+
+    setIsSendingReply(true);
+    setStatusMessage('Encrypting reply and uploading...');
+
+    try {
+      const encoder = new TextEncoder();
+      const payloadData = {
+        report: body,
+        files: [],
+        sender: 'invigilator',
+        timestamp: Date.now(),
+      };
+
+      const payloadBytes = encoder.encode(JSON.stringify(payloadData));
+      const overallHash = await hashSha256(payloadBytes);
+
+      const keyPair = await generateEphemeralKeyPair();
+      const wbStaticPublic = base64ToUint8(selectedCase.wb_static_public);
+      const sharedSecret = await deriveSharedSecret(keyPair.privateKey, wbStaticPublic);
+      const encryptionKey = await deriveEncryptionKey(sharedSecret);
+
+      const encrypted = await encryptReport(payloadBytes, encryptionKey, 'application/json');
+
+      const nextSeq =
+        messages.length > 0 ? Math.max(...messages.map((m) => m.seq)) + 1 : 0;
+
+      const res = await fetch(`${API_BASE}/messages/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          case_id: selectedCase.case_id,
+          ciphertext: await uint8ToBase64(encrypted.ciphertext),
+          nonce: await uint8ToBase64(encrypted.nonce),
+          hash: await uint8ToBase64(overallHash),
+          ephemeral_public_key: await uint8ToBase64(keyPair.publicKey),
+          seq: nextSeq,
+        }),
+      });
+
+      if (!res.ok) {
+        const errorText = await res.text().catch(() => res.statusText);
+        throw new Error(`Failed to send reply: ${errorText}`);
+      }
+
+      setStatusMessage('Reply sent successfully.');
+      // Reload messages so the new reply shows up
+      await loadMessages(selectedCase.case_id);
+    } catch (err: any) {
+      console.error(err);
+      setStatusMessage(`Error: ${err.message}`);
+    } finally {
+      setIsSendingReply(false);
+    }
+  };
+
   if (!isAuthorized) {
     return (
       <Panel title="Access Denied">
         <p className="text-red-600">{statusMessage}</p>
         <p className="text-sm mt-2">
-          Visit: <code className="ml-2 px-2 py-1 bg-slate-200 rounded">/inv?secret=YOUR_UI_SECRET</code>
+          Visit:{' '}
+          <code className="ml-2 px-2 py-1 bg-slate-200 rounded">
+            /inv?secret=YOUR_UI_SECRET
+          </code>
         </p>
       </Panel>
     );
   }
 
-  /**
-   * ============================
-   * Render Dashboard
-   * ============================
-   */
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex items-start justify-between">
         <div className="space-y-2">
           <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">
             Invigilator Dashboard
           </h1>
           <p className="text-sm text-slate-600 dark:text-slate-300">
-            Manage and decrypt whistleblower cases. All data is encrypted end-to-end.
+            Manage and decrypt whistleblower cases. All data is encrypted end-to-end; the
+            backend acts as blind storage.
           </p>
         </div>
         <button
@@ -247,12 +281,9 @@ const InvigilatorPage: React.FC = () => {
         </button>
       </div>
 
-      {/* Status Message */}
       <StatusMessage message={statusMessage} />
 
-      {/* Main Content Grid */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        {/* Cases List */}
         <Panel
           title="Cases"
           description={`${cases.length} case(s) found`}
@@ -260,7 +291,7 @@ const InvigilatorPage: React.FC = () => {
           <CaseList
             cases={cases}
             selectedCase={selectedCase}
-            isLoading={isLoading}
+            isLoading={isLoadingCases}
             onCaseSelect={(caseItem) => {
               setSelectedCase(caseItem);
               setMessages([]);
@@ -270,23 +301,38 @@ const InvigilatorPage: React.FC = () => {
           />
         </Panel>
 
-        {/* Messages for Selected Case */}
         {selectedCase ? (
           <Panel
             title={`Messages - Case ${selectedCase.case_id.substring(0, 8)}...`}
             description={isLoadingMessages ? 'Loading...' : `${messages.length} message(s)`}
           >
-            <MessageList
-              messages={messages}
-              decryptedMessages={decryptedMessages}
-              isLoading={isLoadingMessages}
-              isDecrypting={isDecrypting}
-              canDecrypt={!!invigilatorPrivateKey}
-              onDecrypt={decryptMessage}
-            />
+            <div className="space-y-4">
+              <MessageList
+                messages={messages}
+                decryptedMessages={decryptedMessages}
+                isLoading={isLoadingMessages}
+                isDecrypting={isDecrypting}
+                canDecrypt={!!invigilatorPrivateKey}
+                onDecrypt={decryptMessage}
+              />
+
+              <div className="mt-4 border-t border-slate-200 pt-4 dark:border-slate-700">
+                <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                  Reply to whistleblower
+                </h2>
+                <ReplyBox
+                  onSend={sendReply}
+                  isSending={isSendingReply}
+                  sendLabel="Send encrypted reply"
+                />
+              </div>
+            </div>
           </Panel>
         ) : (
-          <Panel title="Select a Case" description="Choose a case from the list to view messages">
+          <Panel
+            title="Select a Case"
+            description="Choose a case from the list to view messages"
+          >
             <div className="py-12 text-center">
               <svg
                 className="mx-auto h-12 w-12 text-slate-400"
@@ -313,3 +359,5 @@ const InvigilatorPage: React.FC = () => {
 };
 
 export default InvigilatorPage;
+
+
