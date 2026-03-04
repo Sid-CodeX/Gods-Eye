@@ -2,6 +2,7 @@ import React from 'react';
 
 export interface Case {
   case_id: string;
+  wb_static_public: string;
   created_at: number;
   expires_at: number | null;
 }
@@ -46,20 +47,18 @@ const CaseList: React.FC<CaseListProps> = ({ cases, selectedCase, isLoading, onC
         <button
           key={caseItem.case_id}
           onClick={() => onCaseSelect(caseItem)}
-          className={`w-full rounded-lg border-2 p-4 text-left transition-all ${
-            selectedCase?.case_id === caseItem.case_id
+          className={`w-full rounded-lg border-2 p-4 text-left transition-all ${selectedCase?.case_id === caseItem.case_id
               ? 'border-primary-500 bg-primary-50 shadow-md dark:border-primary-400 dark:bg-primary-900/20'
               : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:border-slate-600 dark:hover:bg-slate-700'
-          }`}
+            }`}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div
-                className={`flex h-10 w-10 items-center justify-center rounded-full ${
-                  selectedCase?.case_id === caseItem.case_id
+                className={`flex h-10 w-10 items-center justify-center rounded-full ${selectedCase?.case_id === caseItem.case_id
                     ? 'bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-300'
                     : 'bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-400'
-                }`}
+                  }`}
               >
                 <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
@@ -92,5 +91,6 @@ const CaseList: React.FC<CaseListProps> = ({ cases, selectedCase, isLoading, onC
 };
 
 export default CaseList;
+
 
 
