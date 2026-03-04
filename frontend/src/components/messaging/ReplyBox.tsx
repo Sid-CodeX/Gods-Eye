@@ -2,14 +2,17 @@ import React, { useState } from 'react';
 
 interface ReplyBoxProps {
   onSend: (message: string) => void;
+  isSending?: boolean;
+  sendLabel?: string;
 }
 
-const ReplyBox: React.FC<ReplyBoxProps> = ({ onSend }) => {
+const ReplyBox: React.FC<ReplyBoxProps> = ({ onSend, isSending = false, sendLabel = 'Send reply' }) => {
   const [draft, setDraft] = useState('');
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     const trimmed = draft.trim();
+    if (isSending) return;
     if (!trimmed) return;
     onSend(trimmed);
     setDraft('');
@@ -31,9 +34,10 @@ const ReplyBox: React.FC<ReplyBoxProps> = ({ onSend }) => {
         <span>Messages will be encrypted end-to-end in the browser in production.</span>
         <button
           type="submit"
+          disabled={isSending}
           className="inline-flex items-center rounded-full bg-slate-900 px-4 py-1.5 text-xs font-medium text-white shadow-sm transition hover:bg-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-100 dark:bg-slate-700 dark:hover:bg-slate-600 dark:focus-visible:ring-slate-700 dark:focus-visible:ring-offset-slate-800"
         >
-          Send reply (simulated)
+          {isSending ? 'Sending...' : sendLabel}
         </button>
       </div>
     </form>
