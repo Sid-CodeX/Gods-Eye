@@ -14,7 +14,7 @@ router.post("/send", (req, res) => {
     return res.status(400).json({ error: "Missing required fields: case_id, ciphertext, nonce, hash, ephemeral_public_key, seq" });
   }
 
-  const MAX_SIZE = 1024 * 1024; // 1MB
+  const MAX_SIZE = 10 * 1024 * 1024; // 1MB
   if (ciphertext.length > MAX_SIZE) {
     return res.status(413).json({ error: "Message too large" });
   }
