@@ -10,8 +10,10 @@ CREATE TABLE cases (
 CREATE TABLE messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   case_id TEXT NOT NULL,
-  ciphertext BLOB NOT NULL,
-  nonce TEXT NOT NULL,
+  ciphertext_receiver BLOB NOT NULL,
+  nonce_receiver TEXT NOT NULL,
+  ciphertext_sender BLOB NOT NULL,
+  nonce_sender TEXT NOT NULL,
   hash TEXT NOT NULL,
   ephemeral_public_key TEXT NOT NULL,
   seq INTEGER NOT NULL,
