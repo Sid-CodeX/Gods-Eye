@@ -6,10 +6,10 @@ import FileUploadPlaceholder from '../components/submission/FileUploadPlaceholde
 import { generateEphemeralKeyPair, deriveSharedSecret } from '../crypto/keys';
 import { hashSha256 } from '../crypto/hash';
 import { processFile } from '../crypto/metadata';
-import { encryptReport } from '../crypto/encrypt';
+import { encryptDualReport } from '../crypto/encrypt';
 import { decryptReport } from '../crypto/decrypt';
 import { INVIGILATOR_PUBLIC_KEY } from '../crypto/constants';
-import { deriveEncryptionKey } from '../crypto/kdf';
+import sodium from "libsodium-wrappers";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
@@ -186,22 +186,31 @@ const CheckCasePage: React.FC = () => {
 
       // 2. Build payload
       const payloadData = {
-        report: updateText,
-        files: processedFiles,
-        timestamp: Date.now(),
+        role: "wb",
+        message: {
+          report: updateText,
+          files: processedFiles,
+          timestamp: Date.now(),
+        }
       };
 
       const payloadBytes = encoder.encode(JSON.stringify(payloadData));
       const overallHash = await hashSha256(payloadBytes);
 
       // 3. Crypto – same as case submission
+      await sodium.ready;
       const keyPair = await generateEphemeralKeyPair();
-      const sharedSecret = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
-      const encryptionKey = await deriveEncryptionKey(sharedSecret);
 
-      const encrypted = await encryptReport(
+      const wbPrivateKeyBytes = base64ToUint8(wbPrivateKey.trim());
+      const sender_static_public = sodium.crypto_scalarmult_base(wbPrivateKeyBytes);
+
+      const sharedSecretReceiver = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
+      const sharedSecretSender = await deriveSharedSecret(keyPair.privateKey, sender_static_public);
+
+      const encrypted = await encryptDualReport(
         payloadBytes,
-        encryptionKey,
+        sharedSecretReceiver,
+        sharedSecretSender,
         "application/json"
       );
 
@@ -217,8 +226,10 @@ const CheckCasePage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           case_id: caseId.trim(),
-          ciphertext: await uint8ToBase64(encrypted.ciphertext),
-          nonce: await uint8ToBase64(encrypted.nonce),
+          ciphertext_receiver: await uint8ToBase64(encrypted.ciphertext_receiver),
+          nonce_receiver: await uint8ToBase64(encrypted.nonce_receiver),
+          ciphertext_sender: await uint8ToBase64(encrypted.ciphertext_sender),
+          nonce_sender: await uint8ToBase64(encrypted.nonce_sender),
           hash: await uint8ToBase64(overallHash),
           ephemeral_public_key: await uint8ToBase64(keyPair.publicKey),
           seq: nextSeq,
@@ -368,15 +379,20 @@ const CheckCasePage: React.FC = () => {
                 <div className="rounded bg-white p-3 dark:bg-slate-800">
                   {decryptedMessages.has(message.seq) ? (
                     <div>
-                      <p className="mb-2 text-xs font-bold text-emerald-600 dark:text-emerald-400">Decrypted Content:</p>
-                      <p className="text-sm text-slate-800 dark:text-slate-200 mb-4 whitespace-pre-wrap">
-                        {decryptedMessages.get(message.seq).report}
+                      <p className={`mb-2 text-xs font-bold ${decryptedMessages.get(message.seq).role === 'inv'
+                          ? 'text-blue-600 dark:text-blue-400'
+                          : 'text-emerald-600 dark:text-emerald-400'
+                        }`}>
+                        {decryptedMessages.get(message.seq).role === 'inv' ? 'Investigator Reply:' : 'Decrypted Update:'}
                       </p>
-                      {decryptedMessages.get(message.seq).files?.length > 0 && (
+                      <p className="text-sm text-slate-800 dark:text-slate-200 mb-4 whitespace-pre-wrap">
+                        {decryptedMessages.get(message.seq).message?.report || decryptedMessages.get(message.seq).report}
+                      </p>
+                      {((decryptedMessages.get(message.seq).message?.files) || (decryptedMessages.get(message.seq).files))?.length > 0 && (
                         <div className="mt-4 border-t border-slate-200 pt-4 dark:border-slate-700">
                           <p className="mb-2 text-xs font-semibold text-slate-700 dark:text-slate-300">Attached Files:</p>
                           <ul className="space-y-2">
-                            {decryptedMessages.get(message.seq).files.map((file: any, i: number) => (
+                            {((decryptedMessages.get(message.seq).message?.files) || (decryptedMessages.get(message.seq).files)).map((file: any, i: number) => (
                               <li key={i} className="flex items-center gap-2">
                                 <a
                                   href={`data:${file.mime};base64,${file.data}`}
