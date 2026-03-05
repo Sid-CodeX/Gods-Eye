@@ -9,10 +9,9 @@ import { Message, DecryptedMessage } from '../components/invigilator/MessageCard
 import ReplyBox from '../components/messaging/ReplyBox';
 
 import { decryptReport } from '../crypto/decrypt';
-import { EncryptedPayload, encryptReport } from '../crypto/encrypt';
+import { EncryptedPayload, encryptDualReport } from '../crypto/encrypt';
 import { deriveSharedSecret, generateEphemeralKeyPair } from '../crypto/keys';
 import { hashSha256 } from '../crypto/hash';
-import { deriveEncryptionKey } from '../crypto/kdf';
 import { INVIGILATOR_PUBLIC_KEY } from '../crypto/constants';
 
 import sodium from 'libsodium-wrappers';
@@ -160,7 +159,7 @@ const InvigilatorPage: React.FC = () => {
 
       const sharedSecret = await deriveSharedSecret(invigilatorPrivateKey, ephemeralPublicKey);
 
-      const payload: EncryptedPayload = {
+      const payload = {
         ciphertext,
         nonce,
         fileHash,
@@ -196,10 +195,12 @@ const InvigilatorPage: React.FC = () => {
     try {
       const encoder = new TextEncoder();
       const payloadData = {
-        report: body,
-        files: [],
-        sender: 'invigilator',
-        timestamp: Date.now(),
+        role: "inv",
+        message: {
+          report: body,
+          files: [],
+          timestamp: Date.now()
+        }
       };
 
       const payloadBytes = encoder.encode(JSON.stringify(payloadData));
@@ -207,10 +208,18 @@ const InvigilatorPage: React.FC = () => {
 
       const keyPair = await generateEphemeralKeyPair();
       const wbStaticPublic = base64ToUint8(selectedCase.wb_static_public);
-      const sharedSecret = await deriveSharedSecret(keyPair.privateKey, wbStaticPublic);
-      const encryptionKey = await deriveEncryptionKey(sharedSecret);
 
-      const encrypted = await encryptReport(payloadBytes, encryptionKey, 'application/json');
+      // Following the backend convention: Whistleblower copy is 'sender', Invigilator copy is 'receiver'
+      // Even though Invigilator is sending this, we must map WB to Sender and INV to Receiver.
+      const sharedSecretReceiver = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY); // INV's copy
+      const sharedSecretSender = await deriveSharedSecret(keyPair.privateKey, wbStaticPublic); // WB's copy
+
+      const encrypted = await encryptDualReport(
+        payloadBytes,
+        sharedSecretReceiver,
+        sharedSecretSender,
+        'application/json'
+      );
 
       const nextSeq =
         messages.length > 0 ? Math.max(...messages.map((m) => m.seq)) + 1 : 0;
@@ -220,8 +229,10 @@ const InvigilatorPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           case_id: selectedCase.case_id,
-          ciphertext: await uint8ToBase64(encrypted.ciphertext),
-          nonce: await uint8ToBase64(encrypted.nonce),
+          ciphertext_receiver: await uint8ToBase64(encrypted.ciphertext_receiver),
+          nonce_receiver: await uint8ToBase64(encrypted.nonce_receiver),
+          ciphertext_sender: await uint8ToBase64(encrypted.ciphertext_sender),
+          nonce_sender: await uint8ToBase64(encrypted.nonce_sender),
           hash: await uint8ToBase64(overallHash),
           ephemeral_public_key: await uint8ToBase64(keyPair.publicKey),
           seq: nextSeq,
