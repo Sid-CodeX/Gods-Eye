@@ -43,7 +43,7 @@ router.get("/cases/:case_id/messages", verifyToken, (req, res) => {
   const { case_id } = req.params;
 
   db.all(
-    `SELECT id, ciphertext, nonce, hash, ephemeral_public_key, seq, created_at
+    `SELECT id, ciphertext_receiver AS ciphertext, nonce_receiver AS nonce, hash, ephemeral_public_key, seq, created_at
      FROM messages
      WHERE case_id = ?
      ORDER BY seq ASC`,
