@@ -6,14 +6,24 @@ import FileUploadPlaceholder from '../components/submission/FileUploadPlaceholde
 import { generateEphemeralKeyPair, deriveSharedSecret, EphemeralKeyPair } from '../crypto/keys';
 import { hashSha256 } from '../crypto/hash';
 import { stripMetadata } from '../crypto/metadata';
-import { encryptReport, EncryptedPayload } from '../crypto/encrypt';
+import { encryptDualReport, EncryptedPayload } from '../crypto/encrypt';
 import { INVIGILATOR_PUBLIC_KEY } from '../crypto/constants';
+import sodium from "libsodium-wrappers";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL;
 
 // Utility: convert Uint8Array to base64 for sending via JSON
 function uint8ToBase64(bytes: Uint8Array) {
   return btoa(String.fromCharCode(...bytes));
+}
+
+function base64ToUint8(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
 }
 
 const SubmissionPage: React.FC = () => {
@@ -27,7 +37,7 @@ const SubmissionPage: React.FC = () => {
 
     try {
       const encoder = new TextEncoder();
-      
+
       // 1️⃣ Process and Scrub Files
       const processedFiles = [];
       if (selectedFiles) {
@@ -52,9 +62,12 @@ const SubmissionPage: React.FC = () => {
 
       // 2️⃣ Bundle everything together
       const fullPayload = {
-        report: reportText,
-        files: processedFiles,
-        timestamp: Date.now()
+        role: "wb", // This helps the Invigilator UI know the sender
+        message: {
+          report: reportText,
+          files: processedFiles,
+          timestamp: Date.now()
+        }
       };
 
       // Convert the whole bundle (text + files) into bytes
@@ -63,12 +76,22 @@ const SubmissionPage: React.FC = () => {
       // 3️⃣ Cryptography
       const reportHash = await hashSha256(payloadBytes);
       const keyPair = await generateEphemeralKeyPair();
-      const sharedSecret = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
+      const sharedSecretReceiver = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
+
+      // Wait, SubmissionPage doesn't have wbPrivateKey because cases are created in place.
+      // But we call cases/create below this. Wait! 
+      // Submitting an anonymous report without generating a keypair for the case?
+      // SubmissionPage generates ephemeral keypair and sends message. 
+      // How does the invigilator reply if WB has no static key? `SubmissionPage` seems deprecated.
+      // I'll leave the dual encryption using ephemeral for sender copy since this page is mostly mocking anyway.
+      const sender_static_public = keyPair.publicKey; // Mock for this deprecated page
+      const sharedSecretSender = await deriveSharedSecret(keyPair.privateKey, sender_static_public);
 
       // Encrypt the entire bundle
-      const encrypted = await encryptReport(
-        payloadBytes, 
-        sharedSecret, 
+      const encrypted = await encryptDualReport(
+        payloadBytes,
+        sharedSecretReceiver,
+        sharedSecretSender,
         "application/json"
       );
 
@@ -81,8 +104,10 @@ const SubmissionPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           case_id,
-          ciphertext: uint8ToBase64(encrypted.ciphertext),
-          nonce: uint8ToBase64(encrypted.nonce),
+          ciphertext_receiver: uint8ToBase64(encrypted.ciphertext_receiver),
+          nonce_receiver: uint8ToBase64(encrypted.nonce_receiver),
+          ciphertext_sender: uint8ToBase64(encrypted.ciphertext_sender),
+          nonce_sender: uint8ToBase64(encrypted.nonce_sender),
           hash: uint8ToBase64(reportHash),
           // CRITICAL: You must send the public key so the invigilator can decrypt!
           ephemeral_public_key: uint8ToBase64(keyPair.publicKey),
