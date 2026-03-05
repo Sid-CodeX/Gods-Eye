@@ -6,12 +6,21 @@ import FileUploadPlaceholder from '../components/submission/FileUploadPlaceholde
 import { generateEphemeralKeyPair, deriveSharedSecret, EphemeralKeyPair } from '../crypto/keys';
 import { hashSha256 } from '../crypto/hash';
 import { stripMetadata, processFile } from '../crypto/metadata';
-import { encryptReport, EncryptedPayload } from '../crypto/encrypt';
+import { encryptDualReport, EncryptedPayload } from '../crypto/encrypt';
 import { INVIGILATOR_PUBLIC_KEY } from '../crypto/constants';
-import { deriveEncryptionKey } from "../crypto/kdf";
+import sodium from "libsodium-wrappers";
 
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
+
+function base64ToUint8(base64: string): Uint8Array {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
 
 // Utility: convert Uint8Array to base64 for sending via JSON
 async function uint8ToBase64(bytes: Uint8Array): Promise<string> {
@@ -120,22 +129,31 @@ const CaseSubmissionPage: React.FC = () => {
 
       // 2. Build the Comprehensive Payload
       const payloadData = {
-        report: reportText,
-        files: processedFiles,
-        timestamp: Date.now(),
+        role: "wb",
+        message: {
+          report: reportText,
+          files: processedFiles,
+          timestamp: Date.now(),
+        }
       };
 
       const payloadBytes = encoder.encode(JSON.stringify(payloadData));
       const overallHash = await hashSha256(payloadBytes);
 
       // 3. Cryptography
+      await sodium.ready;
       const keyPair = await generateEphemeralKeyPair();
-      const sharedSecret = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
-      const encryptionKey = await deriveEncryptionKey(sharedSecret);
 
-      const encrypted = await encryptReport(
+      const wbPrivateKeyBytes = base64ToUint8(wbPrivateKey);
+      const sender_static_public = sodium.crypto_scalarmult_base(wbPrivateKeyBytes);
+
+      const sharedSecretReceiver = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY);
+      const sharedSecretSender = await deriveSharedSecret(keyPair.privateKey, sender_static_public);
+
+      const encrypted = await encryptDualReport(
         payloadBytes,
-        encryptionKey,       // sharedSecret (The actual key)
+        sharedSecretReceiver,
+        sharedSecretSender,
         "application/json" // mimeType
       );
 
@@ -146,8 +164,10 @@ const CaseSubmissionPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           case_id: caseId,
-          ciphertext: await uint8ToBase64(encrypted.ciphertext),
-          nonce: await uint8ToBase64(encrypted.nonce),
+          ciphertext_receiver: await uint8ToBase64(encrypted.ciphertext_receiver),
+          nonce_receiver: await uint8ToBase64(encrypted.nonce_receiver),
+          ciphertext_sender: await uint8ToBase64(encrypted.ciphertext_sender),
+          nonce_sender: await uint8ToBase64(encrypted.nonce_sender),
           hash: await uint8ToBase64(overallHash),
           ephemeral_public_key: await uint8ToBase64(keyPair.publicKey),
           seq: 0,
@@ -328,10 +348,10 @@ const CaseSubmissionPage: React.FC = () => {
           {statusMessage && (
             <div
               className={`rounded-lg p-3 text-sm ${statusMessage.startsWith('Error')
-                  ? 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-200'
-                  : statusMessage === 'Processing...' || statusMessage.includes('Submitting')
-                    ? 'bg-blue-50 text-blue-800 dark:bg-blue-900/20 dark:text-blue-200'
-                    : 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200'
+                ? 'bg-red-50 text-red-800 dark:bg-red-900/20 dark:text-red-200'
+                : statusMessage === 'Processing...' || statusMessage.includes('Submitting')
+                  ? 'bg-blue-50 text-blue-800 dark:bg-blue-900/20 dark:text-blue-200'
+                  : 'bg-emerald-50 text-emerald-800 dark:bg-emerald-900/20 dark:text-emerald-200'
                 }`}
               role="alert"
               aria-live="polite"
