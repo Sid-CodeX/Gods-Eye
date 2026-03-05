@@ -7,15 +7,15 @@ const router = express.Router();
 // Send encrypted message
 // -----------------------------
 router.post("/send", (req, res) => {
-  const { case_id, ciphertext, nonce, hash, ephemeral_public_key, seq } = req.body;
+  const { case_id, ciphertext_receiver, nonce_receiver, ciphertext_sender, nonce_sender, hash, ephemeral_public_key, seq } = req.body;
   const createdAt = Math.floor(Date.now() / 1000);
 
-  if (!case_id || !ciphertext || !nonce || !hash || !ephemeral_public_key || typeof seq !== "number") {
-    return res.status(400).json({ error: "Missing required fields: case_id, ciphertext, nonce, hash, ephemeral_public_key, seq" });
+  if (!case_id || !ciphertext_receiver || !nonce_receiver || !ciphertext_sender || !nonce_sender || !hash || !ephemeral_public_key || typeof seq !== "number") {
+    return res.status(400).json({ error: "Missing required fields: case_id, ciphertext_receiver, nonce_receiver, ciphertext_sender, nonce_sender, hash, ephemeral_public_key, seq" });
   }
 
-  const MAX_SIZE = 10 * 1024 * 1024; // 1MB
-  if (ciphertext.length > MAX_SIZE) {
+  const MAX_SIZE = 10 * 1024 * 1024; // 10MB
+  if (ciphertext_receiver.length > MAX_SIZE || ciphertext_sender.length > MAX_SIZE) {
     return res.status(413).json({ error: "Message too large" });
   }
 
@@ -34,9 +34,9 @@ router.post("/send", (req, res) => {
 
       db.run(
         `INSERT INTO messages
-         (case_id, ciphertext, nonce, hash, ephemeral_public_key, seq, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [case_id, ciphertext, nonce, hash, ephemeral_public_key, seq, createdAt],
+         (case_id, ciphertext_receiver, nonce_receiver, ciphertext_sender, nonce_sender, hash, ephemeral_public_key, seq, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [case_id, ciphertext_receiver, nonce_receiver, ciphertext_sender, nonce_sender, hash, ephemeral_public_key, seq, createdAt],
         (err) => {
           if (err) {
             console.error("Database error:", err);
@@ -58,7 +58,7 @@ router.get("/list/:case_id", (req, res) => {
   const { case_id } = req.params;
 
   db.all(
-    `SELECT ciphertext, nonce, hash, ephemeral_public_key, seq, created_at
+    `SELECT ciphertext_sender AS ciphertext, nonce_sender AS nonce, hash, ephemeral_public_key, seq, created_at
      FROM messages
      WHERE case_id = ?
      ORDER BY seq ASC`,
