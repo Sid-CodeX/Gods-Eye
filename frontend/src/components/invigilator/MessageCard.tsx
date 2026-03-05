@@ -12,11 +12,23 @@ export interface Message {
 }
 
 export interface DecryptedMessage {
-  report: string;
-  files: Array<{ 
-    name: string; 
-    data: number[]; 
-    mimeType?: string; 
+  role?: "wb" | "inv";
+  message?: {
+    report: string;
+    files: Array<{
+      name: string;
+      data: number[];
+      mimeType?: string;
+      size?: number;
+      hash?: any;
+    }>;
+  };
+  // Backward compatibility fields
+  report?: string;
+  files?: Array<{
+    name: string;
+    data: number[];
+    mimeType?: string;
     size?: number;
     hash?: any;
   }>;
@@ -49,10 +61,10 @@ const ImagePreview: React.FC<{ data: number[], type: string }> = ({ data, type }
 
   return (
     <div className="mt-3 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700">
-      <img 
-        src={url} 
-        alt="Attachment preview" 
-        className="max-h-64 w-full object-contain bg-slate-100 dark:bg-slate-900" 
+      <img
+        src={url}
+        alt="Attachment preview"
+        className="max-h-64 w-full object-contain bg-slate-100 dark:bg-slate-900"
       />
     </div>
   );
@@ -65,7 +77,7 @@ const MessageCard: React.FC<MessageCardProps> = ({
   canDecrypt,
   onDecrypt,
 }) => {
-  
+
   const handleFileView = (file: any) => {
     try {
       // 1. Validation and Extraction
@@ -81,23 +93,23 @@ const MessageCard: React.FC<MessageCardProps> = ({
       // 2. Explicit Conversion
       // Using Uint8Array.from is sometimes more robust for React-proxied arrays
       const byteArray = Uint8Array.from(rawData);
-      
+
       // 3. Create the Blob
       const blob = new Blob([byteArray], { type: file.mimeType || 'application/octet-stream' });
-      
+
       // 4. Verify
       if (blob.size === 0) {
         throw new Error("Generated Blob resulted in 0 bytes. Check if data is a valid numeric array.");
       }
 
       const url = URL.createObjectURL(blob);
-      
+
       const link = document.createElement('a');
       link.href = url;
       link.download = file.name || 'attachment';
       document.body.appendChild(link);
       link.click();
-      
+
       document.body.removeChild(link);
       setTimeout(() => URL.revokeObjectURL(url), 100);
     } catch (err) {
@@ -137,25 +149,34 @@ const MessageCard: React.FC<MessageCardProps> = ({
       {/* Content */}
       {decrypted ? (
         <div className="space-y-4">
-          <div className="rounded-lg bg-emerald-50 p-4 dark:bg-emerald-900/20">
-            <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700 dark:text-emerald-300 mb-2">
-              Decrypted Report
+          <div className={`rounded-lg p-4 ${decrypted.role === 'inv'
+              ? 'bg-blue-50 dark:bg-blue-900/20'
+              : 'bg-emerald-50 dark:bg-emerald-900/20'
+            }`}>
+            <p className={`text-xs font-semibold uppercase tracking-wide mb-2 ${decrypted.role === 'inv'
+                ? 'text-blue-700 dark:text-blue-300'
+                : 'text-emerald-700 dark:text-emerald-300'
+              }`}>
+              {decrypted.role === 'inv' ? 'Investigator Reply' : 'Decrypted Report'}
             </p>
-            <div className="rounded bg-white p-3 dark:bg-slate-800">
+            <div className={`rounded p-3 ${decrypted.role === 'inv'
+                ? 'bg-blue-50/50 dark:bg-slate-800'
+                : 'bg-white dark:bg-slate-800'
+              }`}>
               <p className="whitespace-pre-wrap text-sm text-slate-900 dark:text-slate-100">
-                {decrypted.report}
+                {decrypted.message?.report || decrypted.report}
               </p>
             </div>
           </div>
 
           {/* Attachments */}
-          {decrypted.files && decrypted.files.length > 0 && (
+          {(decrypted.message?.files || decrypted.files) && (decrypted.message?.files || decrypted.files)!.length > 0 && (
             <div className="rounded-lg border border-slate-200 bg-slate-50 p-4 dark:border-slate-700 dark:bg-slate-700/50">
               <p className="mb-3 text-xs font-semibold text-slate-700 dark:text-slate-300 uppercase">
-                Attachments ({decrypted.files.length})
+                Attachments ({(decrypted.message?.files || decrypted.files)!.length})
               </p>
               <ul className="space-y-3">
-                {decrypted.files.map((file, idx) => (
+                {(decrypted.message?.files || decrypted.files)!.map((file, idx) => (
                   <li key={idx} className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 dark:border-slate-600 dark:bg-slate-800">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
@@ -173,7 +194,7 @@ const MessageCard: React.FC<MessageCardProps> = ({
                           </p>
                         </div>
                       </div>
-                      
+
                       <button
                         onClick={() => handleFileView(file)}
                         className="rounded-md bg-primary-50 px-3 py-1.5 text-xs font-semibold text-primary-700 hover:bg-primary-100 dark:bg-primary-900/30 dark:text-primary-300"
