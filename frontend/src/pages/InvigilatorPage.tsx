@@ -59,6 +59,14 @@ const InvigilatorPage: React.FC = () => {
 
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [isAuthorized, setIsAuthorized] = useState(false);
+  const [sessionToken, setSessionToken] = useState<string | null>(null);
+
+  const [is2FASetupComplete, setIs2FASetupComplete] = useState<boolean | null>(null);
+  const [qrCodeDataUrl, setQrCodeDataUrl] = useState<string | null>(null);
+  const [otpInput, setOtpInput] = useState('');
+  const [isVerifying2FA, setIsVerifying2FA] = useState(false);
+  const [twoFaError, setTwoFaError] = useState<string | null>(null);
+
   const [isLoadingCases, setIsLoadingCases] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [isDecrypting, setIsDecrypting] = useState<number | null>(null);
@@ -83,9 +91,72 @@ const InvigilatorPage: React.FC = () => {
     }
 
     setIsAuthorized(true);
-    loadCases();
-    loadPrivateKey();
+    check2FAStatus();
   }, [uiSecretFromUrl]);
+
+  useEffect(() => {
+    if (sessionToken) {
+      loadCases();
+      loadPrivateKey();
+    }
+  }, [sessionToken]);
+
+  const check2FAStatus = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/inv/2fa/status`, {
+        headers: { 'X-Invigilator-Token': INVIGILATOR_API_TOKEN },
+      });
+      if (!res.ok) throw new Error('Failed to check 2FA status');
+      const data = await res.json();
+      setIs2FASetupComplete(data.isSetupComplete);
+
+      if (!data.isSetupComplete) {
+        setup2FA();
+      }
+    } catch (err: any) {
+      setStatusMessage(`Error checking 2FA: ${err.message}`);
+    }
+  };
+
+  const setup2FA = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/inv/2fa/setup`, {
+        method: 'POST',
+        headers: { 'X-Invigilator-Token': INVIGILATOR_API_TOKEN },
+      });
+      if (!res.ok) throw new Error('Failed to setup 2FA');
+      const data = await res.json();
+      setQrCodeDataUrl(data.qrCode);
+    } catch (err: any) {
+      setTwoFaError(`Setup Error: ${err.message}`);
+    }
+  };
+
+  const verifyOTP = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!otpInput || otpInput.length < 6) return;
+
+    setIsVerifying2FA(true);
+    setTwoFaError(null);
+    try {
+      const res = await fetch(`${API_BASE}/inv/2fa/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Invigilator-Token': INVIGILATOR_API_TOKEN,
+        },
+        body: JSON.stringify({ otp: otpInput }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to verify OTP');
+
+      setSessionToken(data.token);
+    } catch (err: any) {
+      setTwoFaError(err.message);
+    } finally {
+      setIsVerifying2FA(false);
+    }
+  };
 
   const loadPrivateKey = () => {
     const privateKeyHex = import.meta.env.VITE_INVIGILATOR_PRIVATE_KEY;
@@ -100,11 +171,15 @@ const InvigilatorPage: React.FC = () => {
   };
 
   const loadCases = async () => {
+    if (!sessionToken) return;
     setIsLoadingCases(true);
     setStatusMessage('Loading cases...');
     try {
       const res = await fetch(`${API_BASE}/inv/cases`, {
-        headers: { 'X-Invigilator-Token': INVIGILATOR_API_TOKEN },
+        headers: {
+          'X-Invigilator-Token': INVIGILATOR_API_TOKEN,
+          Authorization: `Bearer ${sessionToken}`,
+        },
       });
       if (!res.ok) throw new Error(`Failed to load cases: ${res.statusText}`);
       const data = await res.json();
@@ -118,11 +193,15 @@ const InvigilatorPage: React.FC = () => {
   };
 
   const loadMessages = async (caseId: string) => {
+    if (!sessionToken) return;
     setIsLoadingMessages(true);
     setStatusMessage('Loading messages...');
     try {
       const res = await fetch(`${API_BASE}/inv/cases/${caseId}/messages`, {
-        headers: { 'X-Invigilator-Token': INVIGILATOR_API_TOKEN },
+        headers: {
+          'X-Invigilator-Token': INVIGILATOR_API_TOKEN,
+          Authorization: `Bearer ${sessionToken}`,
+        },
       });
       if (!res.ok) throw new Error(`Failed to load messages: ${res.statusText}`);
       const data = await res.json();
@@ -210,7 +289,6 @@ const InvigilatorPage: React.FC = () => {
       const wbStaticPublic = base64ToUint8(selectedCase.wb_static_public);
 
       // Following the backend convention: Whistleblower copy is 'sender', Invigilator copy is 'receiver'
-      // Even though Invigilator is sending this, we must map WB to Sender and INV to Receiver.
       const sharedSecretReceiver = await deriveSharedSecret(keyPair.privateKey, INVIGILATOR_PUBLIC_KEY); // INV's copy
       const sharedSecretSender = await deriveSharedSecret(keyPair.privateKey, wbStaticPublic); // WB's copy
 
@@ -269,6 +347,62 @@ const InvigilatorPage: React.FC = () => {
     );
   }
 
+  // Show 2FA screen if authorized but missing session
+  if (!sessionToken) {
+    return (
+      <Panel title="Two-Factor Authentication">
+        {is2FASetupComplete === null ? (
+          <p className="text-slate-600">Checking 2FA status...</p>
+        ) : (
+          <form onSubmit={verifyOTP} className="space-y-4">
+            {!is2FASetupComplete && (
+              <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 text-center dark:bg-slate-800 dark:border-slate-700">
+                <p className="text-sm text-slate-700 font-semibold mb-2 dark:text-slate-300">
+                  Initial Setup - Scan using Authenticator App
+                </p>
+                {qrCodeDataUrl ? (
+                  <img src={qrCodeDataUrl} alt="2FA QR Code" className="mx-auto border bg-white p-2 rounded" />
+                ) : (
+                  <p className="text-sm text-slate-500">Loading QR code...</p>
+                )}
+                <p className="text-xs text-slate-500 mt-2">
+                  Use Google Authenticator or Microsoft Authenticator.
+                </p>
+              </div>
+            )}
+
+            <div>
+              <label htmlFor="otp" className="block text-sm font-medium text-slate-700 dark:text-slate-300">
+                Enter 6-digit code
+              </label>
+              <input
+                type="text"
+                id="otp"
+                name="otp"
+                maxLength={6}
+                value={otpInput}
+                onChange={(e) => setOtpInput(e.target.value.replace(/\D/g, ''))} // only digits
+                placeholder="123456"
+                className="mt-1 block w-full rounded-md border-slate-300 px-3 py-2 text-slate-900 shadow-sm focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 sm:text-sm dark:bg-slate-900 dark:border-slate-700 dark:text-white"
+                required
+                autoComplete="off"
+              />
+            </div>
+            {twoFaError && <p className="text-sm text-red-600">{twoFaError}</p>}
+
+            <button
+              type="submit"
+              disabled={isVerifying2FA || otpInput.length !== 6}
+              className="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+            >
+              {isVerifying2FA ? 'Verifying...' : 'Verify OTP'}
+            </button>
+          </form>
+        )}
+      </Panel>
+    );
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between">
@@ -282,13 +416,16 @@ const InvigilatorPage: React.FC = () => {
           </p>
         </div>
         <button
-          onClick={() => navigate('/')}
+          onClick={() => {
+            setSessionToken(null);
+            navigate('/');
+          }}
           className="flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
         >
           <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
           </svg>
-          Back to Home
+          Logout
         </button>
       </div>
 
