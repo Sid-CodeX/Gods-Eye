@@ -24,3 +24,9 @@ CREATE TABLE messages (
 -- Preserve message order per case
 CREATE INDEX idx_messages_case_seq
 ON messages (case_id, seq);
+
+CREATE TABLE admin_settings (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  totp_secret TEXT,
+  is_2fa_setup_complete INTEGER DEFAULT 0
+);
