@@ -10,7 +10,7 @@ import invigilatorRouter from "./routes/invigilator";
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = Number(process.env.PORT) || 3000;
 
 // Middleware
 app.use(cors());
@@ -29,6 +29,14 @@ app.get("/", (req, res) => {
 });
 
 // Start server
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+// app.listen(PORT, () => {
+//   console.log(`Server running on http://localhost:${PORT}`);
+// });
+
+// app.listen(PORT, "127.0.0.1", () => {
+//   console.log(`Server running on http://127.0.0.1:${PORT}`);
+// });
+
+app.listen(Number(PORT), "0.0.0.0", () => {
+  console.log(`Server running on http://0.0.0.0:${PORT}`);
 });
