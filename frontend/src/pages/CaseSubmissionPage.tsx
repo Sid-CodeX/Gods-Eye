@@ -9,6 +9,8 @@ import { stripMetadata, processFile } from '../crypto/metadata';
 import { encryptDualReport, EncryptedPayload } from '../crypto/encrypt';
 import { INVIGILATOR_PUBLIC_KEY } from '../crypto/constants';
 import sodium from "libsodium-wrappers";
+import { deriveEncryptionKey } from "../crypto/kdf";
+import TorChecker from '../components/TorChecker';
 
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api';
@@ -191,10 +193,11 @@ const CaseSubmissionPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-start justify-between">
-        <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
+    <TorChecker>
+      <div className="space-y-6">
+        <div className="flex items-start justify-between">
+          <div className="space-y-2">
+            <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
             Submit an anonymous report
           </h1>
           <p className="max-w-2xl text-sm text-slate-600 dark:text-slate-300">
@@ -362,6 +365,7 @@ const CaseSubmissionPage: React.FC = () => {
         </form>
       </Panel>
     </div>
+    </TorChecker>
   );
 };
 

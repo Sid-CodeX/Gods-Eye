@@ -28,6 +28,21 @@ app.get("/", (req, res) => {
   res.send("Gods-Eye Backend Running!");
 });
 
+// Tor Check proxy route
+app.get("/api/tor-check", async (req, res) => {
+  try {
+    const response = await fetch("https://check.torproject.org/api/ip");
+    if (!response.ok) {
+      throw new Error(`Tor API responded with status: ${response.status}`);
+    }
+    const data = await response.json();
+    res.json(data);
+  } catch (err: any) {
+    console.error("Tor check error:", err.message);
+    res.status(500).json({ IsTor: false, error: err.message });
+  }
+});
+
 // Start server
 // app.listen(PORT, () => {
 //   console.log(`Server running on http://localhost:${PORT}`);
