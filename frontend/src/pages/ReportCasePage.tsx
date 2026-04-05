@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Panel from '../components/layout/Panel';
+import TorChecker from '../components/TorChecker';
 import { generateEphemeralKeyPair } from '../crypto/keys';
 
 async function uint8ToBase64(bytes: Uint8Array): Promise<string> {
@@ -67,7 +68,8 @@ const ReportCasePage: React.FC = () => {
   };
 
   return (
-    <div className="space-y-6">
+    <TorChecker>
+      <div className="space-y-6">
       <div className="space-y-2">
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900 dark:text-white">
           Anonymous Whistleblower Portal
@@ -130,6 +132,7 @@ const ReportCasePage: React.FC = () => {
         </div>
       </Panel>
     </div>
+    </TorChecker>
   );
 };
 
