@@ -9,14 +9,25 @@ const TorChecker: React.FC<{ children: React.ReactNode }> = ({ children }) => {
 
   useEffect(() => {
     const checkTor = async () => {
+      // Heuristic Check: Tor Browser employs strong anti-fingerprinting. 
+      // It runs Firefox, and spoofs the timezone to UTC (0) regardless of system time.
+      const isFirefox = navigator.userAgent.toLowerCase().includes('firefox');
+      const tzOffset = new Date().getTimezoneOffset();
+      const isTimezoneUTC = tzOffset === 0;
+      
+      const isLikelyTorHeuristic = isFirefox && isTimezoneUTC;
+
       try {
-        const res = await fetch(`${API_BASE}/tor-check`);
+        // Fetch from frontend directly so it respects the browser's proxy/Tor exit node
+        const res = await fetch(`https://check.torproject.org/api/ip`);
         if (!res.ok) throw new Error("Failed to check Tor status");
         const data = await res.json();
-        setIsTor(data.IsTor === true);
+        
+        // If API detects Tor OR our browser heuristics detect Tor
+        setIsTor(data.IsTor === true || isLikelyTorHeuristic);
       } catch (err: any) {
-        // Safe default: if we can't verify, deny access
-        setIsTor(false);
+        // Fallback method (e.g. if offline or API blocked)
+        setIsTor(isLikelyTorHeuristic);
       } finally {
         setLoading(false);
       }
